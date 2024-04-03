@@ -1,0 +1,127 @@
+# Secret for tornado Hello World OAuth
+---
+kind: Secret
+apiVersion: v1
+metadata:
+  name: thw-oauth-config
+data:
+  cookie_secret: VjFVNGFqVlVja0kyVTBKSGEyczNMMlJyZFVGUlp6MDk=
+type: Opaque
+
+# Service for tornado Hello World
+---
+kind: Service
+apiVersion: v1
+metadata:
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: thw-tls
+  name: thw-tls
+spec:
+  ports:
+    - name: oauth-proxy
+      protocol: TCP
+      port: 443
+      targetPort: oauth-proxy
+  selector:
+    app: tornado-hello-world
+# ServiceAccount for tornado Hello World
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: tornado-hello-world
+  annotations:
+    serviceaccounts.openshift.io/oauth-redirectreference.first: >-
+      {"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"thw-route"}}
+# Route for tornado Hello World
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: thw-route
+spec:
+  to:
+    kind: Service
+    name: thw-tls
+    weight: 100
+  port:
+    targetPort: oauth-proxy
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+# Deployment for tornado Hello World
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tornado-hello-world
+spec:
+  selector:
+    matchLabels:
+      app: tornado-hello-world
+  template:
+    metadata:
+      labels:
+        app: tornado-hello-world
+    spec:
+      serviceAccountName: tornado-hello-world
+      containers:
+        - image: quay.io/harshad16/tornado-hello-world:latest
+          name: tornado-hello-world
+          resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          ports:
+            - containerPort: 8888
+              name: http-web
+        - resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          name: oauth-proxy
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - containerPort: 8443
+              name: oauth-proxy
+          imagePullPolicy: Always
+          volumeMounts:
+            - mountPath: /etc/oauth/config
+              name: oauth-config
+            - mountPath: /etc/tls/private
+              name: tls-certificates
+          image: >-
+            registry.redhat.io/openshift4/ose-oauth-proxy@sha256:4bef31eb993feb6f1096b51b4876c65a6fb1f4401fee97fa4f4542b6b7c9bc46
+          args:
+            - '--provider=openshift'
+            - '--https-address=:8443'
+            - '--http-address='
+            - '--email-domain=*'
+            - '--openshift-service-account=tornado-hello-world'
+            - '--cookie-secret-file=/etc/oauth/config/cookie_secret'
+            - '--cookie-expire=24h0m0s'
+            - '--tls-cert=/etc/tls/private/tls.crt'
+            - '--tls-key=/etc/tls/private/tls.key'
+            - '--upstream=http://localhost:8888'
+            - '--upstream-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+            - '--pass-access-token'
+      volumes:
+        - name: oauth-config
+          secret:
+            defaultMode: 420
+            secretName: thw-oauth-config
+        - name: tls-certificates
+          secret:
+            defaultMode: 420
+            secretName: thw-tls
